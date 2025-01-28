@@ -57,7 +57,6 @@ def verify_slack_request(request):
         request_body = request.get_data().decode('utf-8')
         sig_basestring = f"v0:{timestamp}:{request_body}"
         
-        # Get signing secret
         signing_secret = os.getenv('SLACK_SIGNING_SECRET')
         if not signing_secret:
             logger.error("No signing secret found in environment variables")
@@ -81,40 +80,54 @@ def verify_slack_request(request):
 def create_github_branch(branch_name):
     """Create a new branch in GitHub repository"""
     try:
+        logger.info(f"Attempting to create branch: {branch_name}")
+        logger.debug(f"REPO_OWNER: {REPO_OWNER}, REPO_NAME: {REPO_NAME}")
+        
         headers = {
             "Authorization": f"token {GITHUB_TOKEN}",
             "Accept": "application/vnd.github.v3+json"
         }
         
         base_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
+        logger.info(f"Using base URL: {base_url}")
         
         # Get the SHA of the main branch
+        logger.info("Fetching main branch SHA...")
         response = requests.get(f"{base_url}/git/refs/heads/main", headers=headers)
         
         if response.status_code == 404:
+            logger.info("Main branch not found, trying master...")
             response = requests.get(f"{base_url}/git/refs/heads/master", headers=headers)
             if response.status_code == 404:
+                logger.error("Neither main nor master branch found")
                 return "❌ Could not find main or master branch"
         
         response.raise_for_status()
         base_sha = response.json()["object"]["sha"]
+        logger.info(f"Got base SHA: {base_sha[:7]}")
         
         data = {
             "ref": f"refs/heads/{branch_name}",
             "sha": base_sha
         }
         
+        logger.info("Creating new branch...")
         response = requests.post(f"{base_url}/git/refs", headers=headers, json=data)
         
         if response.status_code == 422:
             error_message = response.json().get("message", "Unknown error")
+            logger.error(f"GitHub API error (422): {error_message}")
             if "Reference already exists" in error_message:
                 return f"❌ Branch '{branch_name}' already exists"
             return f"❌ Error creating branch: {error_message}"
             
         response.raise_for_status()
+        logger.info(f"Successfully created branch: {branch_name}")
         return f"✅ Branch '{branch_name}' created successfully"
         
+    except requests.exceptions.RequestException as e:
+        logger.error(f"GitHub API error: {str(e)}")
+        return f"❌ GitHub API error: {str(e)}"
     except Exception as e:
         logger.error(f"Error creating branch: {str(e)}")
         return f"❌ Error: {str(e)}"
@@ -128,6 +141,8 @@ def list_github_branches():
         }
         
         base_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
+        logger.info(f"Listing branches from: {base_url}")
+        
         response = requests.get(f"{base_url}/branches", headers=headers)
         response.raise_for_status()
         
@@ -153,21 +168,24 @@ def health_check():
 @app.route("/slack/events", methods=["POST"])
 def slack_handler():
     logger.info("Received Slack request")
+    logger.debug(f"Request form data: {request.form}")
+    logger.debug(f"Request headers: {request.headers}")
     
     if not verify_slack_request(request):
         logger.error("Failed to verify Slack request")
         return jsonify({"error": "Invalid request signature"}), 403
 
     try:
-        # Handle URL verification
         if request.is_json and request.json.get('type') == 'url_verification':
-            return jsonify({"challenge": request.json.get('challenge')})
+            challenge = request.json.get('challenge')
+            logger.info(f"Handling URL verification. Challenge: {challenge}")
+            return jsonify({"challenge": challenge})
 
-        # Get command text and channel
         command_text = request.form.get('text', '').strip()
         channel_id = request.form.get('channel_id')
         
         logger.info(f"Processing command: {command_text}")
+        logger.info(f"Channel ID: {channel_id}")
 
         def process_command():
             try:
@@ -187,16 +205,22 @@ def slack_handler():
                 else:
                     response_text = "❌ Unknown command. Available commands:\n• create-branch <branch-name>\n• list-branches"
 
+                logger.info(f"Sending response to Slack: {response_text}")
                 slack_client.chat_postMessage(
                     channel=channel_id,
                     text=response_text
                 )
+                logger.info("Response sent successfully")
+                
             except Exception as e:
                 logger.error(f"Error processing command: {str(e)}")
-                slack_client.chat_postMessage(
-                    channel=channel_id,
-                    text=f"❌ Error: {str(e)}"
-                )
+                try:
+                    slack_client.chat_postMessage(
+                        channel=channel_id,
+                        text=f"❌ Error: {str(e)}"
+                    )
+                except Exception as slack_error:
+                    logger.error(f"Error sending error message to Slack: {str(slack_error)}")
 
         Thread(target=process_command).start()
         return jsonify({"message": "Processing request..."}), 200
