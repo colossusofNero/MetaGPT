@@ -24,8 +24,11 @@ SLACK_SIGNING_SECRET = os.getenv('SLACK_SIGNING_SECRET')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 REPO_OWNER = os.getenv('REPO_OWNER')
 REPO_NAME = os.getenv('REPO_NAME')
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 
-# Initialize Slack client
+# Initialize API clients
+openai.api_key = OPENAI_API_KEY
 slack_client = WebClient(token=SLACK_BOT_TOKEN)
 
 # Configure logging
@@ -135,11 +138,24 @@ def create_github_branch(branch_name):
         logger.error(f"Error creating branch: {str(e)}")
         return f"❌ Error: {str(e)}"
 
+def handle_chat_command(user_message):
+    """Processes a chat request using OpenAI"""
+    try:
+        logger.info(f"Processing chat command: {user_message}")
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": user_message}],
+            api_key=OPENAI_API_KEY
+        )
+        return response["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"Error in chat command: {str(e)}")
+        return f"❌ OpenAI Error: {str(e)}"
+
 def generate_code_with_chatgpt(project_name, template, description):
     """Generate initial code using ChatGPT"""
     try:
         logger.info(f"Generating code with ChatGPT for project: {project_name}")
-        openai.api_key = os.getenv("OPENAI_API_KEY")
         
         prompt = f"""
         Create a new {template} project named "{project_name}".
@@ -167,8 +183,7 @@ def refine_code_with_claude(code):
     """Refine the generated code using Claude"""
     try:
         logger.info("Refining code with Claude")
-        anthropic_api_key = os.getenv("CLAUDE_API_KEY")
-        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
         
         prompt = f"""
         Review and refine the following code for best practices and readability.
@@ -285,11 +300,15 @@ def slack_handler():
                             response_text = create_stackblitz_project(project_name, template, description)
                     except Exception as e:
                         response_text = f"❌ Error creating project: {str(e)}"
+                elif command_text.startswith("chat "):
+                    user_message = command_text[5:]  # Remove "chat " prefix
+                    response_text = handle_chat_command(user_message)
                 else:
                     response_text = (
                         "❌ Unknown command. Available commands:\n"
                         "• create-branch <branch-name>\n"
-                        "• create-project <project-name> <template> <description>"
+                        "• create-project <project-name> <template> <description>\n"
+                        "• chat <message>"
                     )
 
                 logger.info(f"Sending response to Slack: {response_text}")
