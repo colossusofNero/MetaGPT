@@ -133,95 +133,6 @@ def create_github_branch(branch_name):
         logger.error(f"Error creating branch: {str(e)}")
         return f"❌ Error: {str(e)}"
 
-def list_github_branches():
-    """List all branches in GitHub repository"""
-    try:
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
-        base_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
-        logger.info(f"Listing branches from: {base_url}")
-        
-        response = requests.get(f"{base_url}/branches", headers=headers)
-        response.raise_for_status()
-        
-        branches = response.json()
-        if not branches:
-            return "No branches found in the repository."
-            
-        branch_list = []
-        for branch in branches:
-            branch_list.append(f"• {branch['name']} ({branch['commit']['sha'][:7]})")
-            
-        return "Repository branches:\n" + "\n".join(branch_list)
-        
-    except Exception as e:
-        logger.error(f"Error listing branches: {str(e)}")
-        return f"❌ Error: {str(e)}"
-
-def create_stackblitz_project(project_title, project_description, template="javascript"):
-    """Creates a new project on StackBlitz using a POST request."""
-    try:
-        logger.info(f"Attempting to create StackBlitz project: {project_title}")
-        
-        # Define default files based on template
-        if template == "javascript":
-            files = {
-                "project[files][index.html]": "<div id='app'></div>",
-                "project[files][index.js]": "console.log('Hello from StackBlitz!');",
-                "project[files][style.css]": "body { font-family: sans-serif; }",
-                "project[dependencies]": json.dumps({
-                    "react": "^18.0.0",
-                    "react-dom": "^18.0.0"
-                })
-            }
-        elif template == "typescript":
-            files = {
-                "project[files][index.html]": "<div id='app'></div>",
-                "project[files][index.ts]": "console.log('Hello from TypeScript!');",
-                "project[files][style.css]": "body { font-family: sans-serif; }",
-                "project[dependencies]": json.dumps({
-                    "typescript": "^4.0.0"
-                })
-            }
-        else:
-            return f"❌ Unsupported template: {template}. Use 'javascript' or 'typescript'."
-        
-        # Combine project metadata with files
-        project_data = {
-            "project[title]": project_title,
-            "project[description]": project_description,
-            "project[template]": template,
-            "project[settings]": json.dumps({
-                "compile": {
-                    "clearConsole": False,
-                    "trigger": "auto"
-                }
-            }),
-            **files
-        }
-        
-        logger.info("Sending POST request to StackBlitz...")
-        response = requests.post(
-            "https://stackblitz.com/run",
-            data=project_data,
-            allow_redirects=True
-        )
-        
-        if response.status_code in [200, 201, 302]:
-            project_url = response.url
-            logger.info(f"Project created successfully at: {project_url}")
-            return f"✅ Project '{project_title}' created successfully! Open it here: {project_url}"
-        else:
-            logger.error(f"Error creating project: {response.text}")
-            return f"❌ Error creating project: {response.status_code}"
-            
-    except Exception as e:
-        logger.error(f"Error in create_stackblitz_project: {str(e)}")
-        return f"❌ Error: {str(e)}"
-
 @app.route("/", methods=["GET"])
 def health_check():
     return jsonify({"status": "healthy", "message": "Server is running"}), 200
@@ -230,8 +141,6 @@ def health_check():
 @app.route("/slack/events", methods=["POST"])
 def slack_handler():
     logger.info("Received Slack request")
-    logger.debug(f"Request form data: {request.form}")
-    logger.debug(f"Request headers: {request.headers}")
     
     if not verify_slack_request(request):
         logger.error("Failed to verify Slack request")
@@ -245,7 +154,7 @@ def slack_handler():
 
         command_text = request.form.get('text', '').strip()
         channel_id = request.form.get('channel_id')
-        
+
         logger.info(f"Processing command: {command_text}")
         logger.info(f"Channel ID: {channel_id}")
 
@@ -262,31 +171,10 @@ def slack_handler():
                     else:
                         branch_name = parts[1].strip()
                         response_text = create_github_branch(branch_name)
-                elif command_text.strip() == "list-branches":
-                    response_text = list_github_branches()
-                elif command_text.startswith("create-project"):
-                    parts = command_text.split(maxsplit=3)  # Split for title, template (optional), and description
-                    if len(parts) < 3:
-                        response_text = (
-                            "❌ Please provide project details:\n"
-                            "`/metagpt create-project <title> [template] <description>`\n"
-                            "Templates: javascript (default), typescript"
-                        )
-                    else:
-                        project_title = parts[1].strip()
-                        if len(parts) == 4:
-                            template = parts[2].strip()
-                            project_description = parts[3].strip()
-                        else:
-                            template = "javascript"
-                            project_description = parts[2].strip()
-                        response_text = create_stackblitz_project(project_title, project_description, template)
                 else:
                     response_text = (
                         "❌ Unknown command. Available commands:\n"
                         "• create-branch <branch-name>\n"
-                        "• list-branches\n"
-                        "• create-project <title> [template] <description>"
                     )
 
                 logger.info(f"Sending response to Slack: {response_text}")
