@@ -125,7 +125,7 @@ def generate_code_with_chatgpt(project_name, template, description):
         raise
 
 def refine_code_with_claude(code):
-    """Refine the generated code using Claude"""
+    """Refine the generated code using Claude via direct API call"""
     try:
         logger.info("Refining code with Claude")
         
@@ -133,56 +133,48 @@ def refine_code_with_claude(code):
             logger.error("CLAUDE_API_KEY is not set")
             raise ValueError("CLAUDE_API_KEY environment variable is not set")
         
-        logger.info("Anthropic version: %s", anthropic.__version__)
+        headers = {
+            "x-api-key": CLAUDE_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
         
-        try:
-            # Create base client with no additional configuration
-            anthropic_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-            logger.info("Successfully initialized Anthropic client")
-        except TypeError as type_error:
-            logger.error(f"TypeError during client initialization: {str(type_error)}")
-            # Try alternate initialization
-            try:
-                logger.info("Attempting alternate client initialization")
-                anthropic_client = anthropic.Client(api_key=CLAUDE_API_KEY)
-                logger.info("Successfully initialized Anthropic client using alternate method")
-            except Exception as alt_error:
-                logger.error(f"Failed alternate initialization: {str(alt_error)}")
-                raise
-        except Exception as client_error:
-            logger.error(f"Failed to initialize Anthropic client: {str(client_error)}")
-            raise
+        data = {
+            "model": "claude-3-opus-20240229",
+            "messages": [{
+                "role": "user",
+                "content": f"""
+                Review and refine the following code for best practices and readability.
+                Ensure it is optimized and free of syntax errors.
+                Return each file's code separately and clearly labeled.
+                Code: {code}
+                """
+            }]
+        }
         
-        try:
-            message = anthropic_client.messages.create(
-                model="claude-3-opus-20240229",
-                messages=[{
-                    "role": "user", 
-                    "content": f"""
-                    Review and refine the following code for best practices and readability.
-                    Ensure it is optimized and free of syntax errors.
-                    Return each file's code separately and clearly labeled.
-                    Code: {code}
-                    """
-                }]
-            )
-            logger.info("Successfully received response from Claude")
+        logger.info("Making request to Claude API")
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=data
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"Claude API error: {response.status_code} - {response.text}")
+            raise Exception(f"Claude API returned status code {response.status_code}")
             
-            if not message or not message.content:
-                raise ValueError("Received empty response from Claude")
-                
-            return message.content[0].text
+        response_data = response.json()
+        logger.info("Successfully received response from Claude")
+        
+        if not response_data or 'content' not in response_data or not response_data['content']:
+            raise ValueError("Received empty response from Claude")
             
-        except Exception as e:
-            logger.error(f"Error during Claude API call: {str(e)}")
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Error args: {e.args}")
-            raise
+        return response_data['content'][0]['text']
             
     except Exception as e:
         logger.error(f"Error refining code with Claude: {str(e)}")
         raise
-
+    
 def create_github_branch(branch_name):
     """Create a new branch in GitHub repository"""
     try:
