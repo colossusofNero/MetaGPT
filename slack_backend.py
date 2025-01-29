@@ -73,69 +73,10 @@ def verify_slack_request(request):
             hashlib.sha256
         ).hexdigest()
         
-        logger.debug(f"Base string: {sig_basestring}")
-        logger.debug(f"My signature: {my_signature}")
-        logger.debug(f"Slack signature: {slack_signature}")
-        
         return hmac.compare_digest(my_signature, slack_signature)
     except Exception as e:
         logger.error(f"Error in verify_slack_request: {str(e)}")
         return False
-
-def create_github_branch(branch_name):
-    """Create a new branch in GitHub repository"""
-    try:
-        logger.info(f"Attempting to create branch: {branch_name}")
-        logger.debug(f"REPO_OWNER: {REPO_OWNER}, REPO_NAME: {REPO_NAME}")
-        
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
-        base_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
-        logger.info(f"Using base URL: {base_url}")
-        
-        # Get the SHA of the main branch
-        logger.info("Fetching main branch SHA...")
-        response = requests.get(f"{base_url}/git/refs/heads/main", headers=headers)
-        
-        if response.status_code == 404:
-            logger.info("Main branch not found, trying master...")
-            response = requests.get(f"{base_url}/git/refs/heads/master", headers=headers)
-            if response.status_code == 404:
-                logger.error("Neither main nor master branch found")
-                return "❌ Could not find main or master branch"
-        
-        response.raise_for_status()
-        base_sha = response.json()["object"]["sha"]
-        logger.info(f"Got base SHA: {base_sha[:7]}")
-        
-        data = {
-            "ref": f"refs/heads/{branch_name}",
-            "sha": base_sha
-        }
-        
-        logger.info("Creating new branch...")
-        response = requests.post(f"{base_url}/git/refs", headers=headers, json=data)
-        
-        if response.status_code == 422:
-            error_message = response.json().get("message", "Unknown error")
-            logger.error(f"GitHub API error (422): {error_message}")
-            if "Reference already exists" in error_message:
-                return f"❌ Branch '{branch_name}' already exists"
-            return f"❌ Error creating branch: {error_message}"
-            
-        response.raise_for_status()
-        logger.info(f"Successfully created branch: {branch_name}")
-        return f"✅ Branch '{branch_name}' created successfully"
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"GitHub API error: {str(e)}")
-        return f"❌ GitHub API error: {str(e)}"
-    except Exception as e:
-        logger.error(f"Error creating branch: {str(e)}")
-        return f"❌ Error: {str(e)}"
 
 def handle_chat_command(user_message):
     """Processes a chat request using OpenAI"""
@@ -191,21 +132,30 @@ def refine_code_with_claude(code):
         if not CLAUDE_API_KEY:
             logger.error("CLAUDE_API_KEY is not set")
             raise ValueError("CLAUDE_API_KEY environment variable is not set")
-            
+        
+        logger.info("Anthropic version: %s", anthropic.__version__)
+        
         try:
-            # Import and initialize client with bare minimum configuration
-            from anthropic import Anthropic
-            anthropic_client = Anthropic(api_key=CLAUDE_API_KEY)
+            # Create base client with no additional configuration
+            anthropic_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
             logger.info("Successfully initialized Anthropic client")
+        except TypeError as type_error:
+            logger.error(f"TypeError during client initialization: {str(type_error)}")
+            # Try alternate initialization
+            try:
+                logger.info("Attempting alternate client initialization")
+                anthropic_client = anthropic.Client(api_key=CLAUDE_API_KEY)
+                logger.info("Successfully initialized Anthropic client using alternate method")
+            except Exception as alt_error:
+                logger.error(f"Failed alternate initialization: {str(alt_error)}")
+                raise
         except Exception as client_error:
             logger.error(f"Failed to initialize Anthropic client: {str(client_error)}")
             raise
         
         try:
-            # Make the API call
             message = anthropic_client.messages.create(
                 model="claude-3-opus-20240229",
-                max_tokens=1500,
                 messages=[{
                     "role": "user", 
                     "content": f"""
@@ -225,7 +175,6 @@ def refine_code_with_claude(code):
             
         except Exception as e:
             logger.error(f"Error during Claude API call: {str(e)}")
-            # Log more details about the error
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Error args: {e.args}")
             raise
@@ -233,6 +182,60 @@ def refine_code_with_claude(code):
     except Exception as e:
         logger.error(f"Error refining code with Claude: {str(e)}")
         raise
+
+def create_github_branch(branch_name):
+    """Create a new branch in GitHub repository"""
+    try:
+        logger.info(f"Attempting to create branch: {branch_name}")
+        
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        base_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
+        logger.info(f"Using base URL: {base_url}")
+        
+        # Get the SHA of the main branch
+        logger.info("Fetching main branch SHA...")
+        response = requests.get(f"{base_url}/git/refs/heads/main", headers=headers)
+        
+        if response.status_code == 404:
+            logger.info("Main branch not found, trying master...")
+            response = requests.get(f"{base_url}/git/refs/heads/master", headers=headers)
+            if response.status_code == 404:
+                logger.error("Neither main nor master branch found")
+                return "❌ Could not find main or master branch"
+        
+        response.raise_for_status()
+        base_sha = response.json()["object"]["sha"]
+        logger.info(f"Got base SHA: {base_sha[:7]}")
+        
+        data = {
+            "ref": f"refs/heads/{branch_name}",
+            "sha": base_sha
+        }
+        
+        logger.info("Creating new branch...")
+        response = requests.post(f"{base_url}/git/refs", headers=headers, json=data)
+        
+        if response.status_code == 422:
+            error_message = response.json().get("message", "Unknown error")
+            logger.error(f"GitHub API error (422): {error_message}")
+            if "Reference already exists" in error_message:
+                return f"❌ Branch '{branch_name}' already exists"
+            return f"❌ Error creating branch: {error_message}"
+            
+        response.raise_for_status()
+        logger.info(f"Successfully created branch: {branch_name}")
+        return f"✅ Branch '{branch_name}' created successfully"
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"GitHub API error: {str(e)}")
+        return f"❌ GitHub API error: {str(e)}"
+    except Exception as e:
+        logger.error(f"Error creating branch: {str(e)}")
+        return f"❌ Error: {str(e)}"
 
 def create_stackblitz_project(project_name, template, description):
     """Creates a new project using AI collaboration and StackBlitz"""
