@@ -7,6 +7,8 @@ import hmac
 import hashlib
 import time
 import json
+import openai
+import anthropic
 from threading import Thread
 import logging
 from dotenv import load_dotenv
@@ -133,6 +135,104 @@ def create_github_branch(branch_name):
         logger.error(f"Error creating branch: {str(e)}")
         return f"❌ Error: {str(e)}"
 
+def generate_code_with_chatgpt(project_name, template, description):
+    """Generate initial code using ChatGPT"""
+    try:
+        logger.info(f"Generating code with ChatGPT for project: {project_name}")
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        
+        prompt = f"""
+        Create a new {template} project named "{project_name}".
+        Include a basic index.js, index.html, and style.css file.
+        Add comments explaining the code.
+        Project Description: {description}
+        Return the code for each file separately, clearly labeled.
+        """
+        
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an expert software engineer."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        logger.info("Successfully generated code with ChatGPT")
+        return response["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"Error generating code with ChatGPT: {str(e)}")
+        raise
+
+def refine_code_with_claude(code):
+    """Refine the generated code using Claude"""
+    try:
+        logger.info("Refining code with Claude")
+        anthropic_api_key = os.getenv("CLAUDE_API_KEY")
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        
+        prompt = f"""
+        Review and refine the following code for best practices and readability.
+        Ensure it is optimized and free of syntax errors.
+        Return each file's code separately and clearly labeled.
+        Code: {code}
+        """
+        
+        response = client.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        logger.info("Successfully refined code with Claude")
+        return response.content
+    except Exception as e:
+        logger.error(f"Error refining code with Claude: {str(e)}")
+        raise
+
+def create_stackblitz_project(project_name, template, description):
+    """Creates a new project using AI collaboration and StackBlitz"""
+    try:
+        logger.info(f"Creating project: {project_name}")
+        
+        # Generate and refine code using AI
+        generated_code = generate_code_with_chatgpt(project_name, template, description)
+        logger.info("Code generated successfully")
+        
+        refined_code = refine_code_with_claude(generated_code)
+        logger.info("Code refined successfully")
+        
+        # Parse the refined code to separate files (simple parsing)
+        code_parts = refined_code.split("```")
+        js_code = next((part for part in code_parts if "index.js" in part), "console.log('Hello World');")
+        html_code = next((part for part in code_parts if "index.html" in part), "<h1>Hello World</h1>")
+        css_code = next((part for part in code_parts if "style.css" in part), "body { font-family: sans-serif; }")
+        
+        # Create project on StackBlitz
+        project_data = {
+            "project[title]": project_name,
+            "project[description]": description,
+            "project[template]": template,
+            "project[files][index.js]": js_code.strip(),
+            "project[files][index.html]": html_code.strip(),
+            "project[files][style.css]": css_code.strip()
+        }
+        
+        logger.info("Sending project to StackBlitz...")
+        response = requests.post("https://stackblitz.com/run", data=project_data)
+        
+        if response.status_code == 200:
+            project_url = response.url
+            logger.info(f"Project created successfully at: {project_url}")
+            return f"✅ Project '{project_name}' created successfully! Open it here: {project_url}"
+        else:
+            error_msg = f"Failed to create project. Status: {response.status_code}"
+            logger.error(error_msg)
+            return f"❌ {error_msg}"
+            
+    except Exception as e:
+        logger.error(f"Error creating project: {str(e)}")
+        return f"❌ Error: {str(e)}"
+
 @app.route("/", methods=["GET"])
 def health_check():
     return jsonify({"status": "healthy", "message": "Server is running"}), 200
@@ -171,10 +271,25 @@ def slack_handler():
                     else:
                         branch_name = parts[1].strip()
                         response_text = create_github_branch(branch_name)
+                elif command_text.startswith("create-project"):
+                    try:
+                        parts = command_text.split(maxsplit=3)
+                        if len(parts) < 4:
+                            response_text = (
+                                "❌ Please provide all required details:\n"
+                                "`/metagpt create-project <project-name> <template> <description>`\n"
+                                "Templates: javascript, typescript"
+                            )
+                        else:
+                            _, project_name, template, description = parts
+                            response_text = create_stackblitz_project(project_name, template, description)
+                    except Exception as e:
+                        response_text = f"❌ Error creating project: {str(e)}"
                 else:
                     response_text = (
                         "❌ Unknown command. Available commands:\n"
                         "• create-branch <branch-name>\n"
+                        "• create-project <project-name> <template> <description>"
                     )
 
                 logger.info(f"Sending response to Slack: {response_text}")
