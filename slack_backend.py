@@ -187,23 +187,49 @@ def refine_code_with_claude(code):
     """Refine the generated code using Claude"""
     try:
         logger.info("Refining code with Claude")
-        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
         
-        prompt = f"""
-        Review and refine the following code for best practices and readability.
-        Ensure it is optimized and free of syntax errors.
-        Return each file's code separately and clearly labeled.
-        Code: {code}
-        """
+        if not CLAUDE_API_KEY:
+            logger.error("CLAUDE_API_KEY is not set")
+            raise ValueError("CLAUDE_API_KEY environment variable is not set")
+            
+        try:
+            # Import and initialize client with bare minimum configuration
+            from anthropic import Anthropic
+            anthropic_client = Anthropic(api_key=CLAUDE_API_KEY)
+            logger.info("Successfully initialized Anthropic client")
+        except Exception as client_error:
+            logger.error(f"Failed to initialize Anthropic client: {str(client_error)}")
+            raise
         
-        response = client.messages.create(
-            model="claude-3-opus-20240229",
-            max_tokens=4000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        logger.info("Successfully refined code with Claude")
-        return response.content
+        try:
+            # Make the API call
+            message = anthropic_client.messages.create(
+                model="claude-3-opus-20240229",
+                max_tokens=1500,
+                messages=[{
+                    "role": "user", 
+                    "content": f"""
+                    Review and refine the following code for best practices and readability.
+                    Ensure it is optimized and free of syntax errors.
+                    Return each file's code separately and clearly labeled.
+                    Code: {code}
+                    """
+                }]
+            )
+            logger.info("Successfully received response from Claude")
+            
+            if not message or not message.content:
+                raise ValueError("Received empty response from Claude")
+                
+            return message.content[0].text
+            
+        except Exception as e:
+            logger.error(f"Error during Claude API call: {str(e)}")
+            # Log more details about the error
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error args: {e.args}")
+            raise
+            
     except Exception as e:
         logger.error(f"Error refining code with Claude: {str(e)}")
         raise
