@@ -141,15 +141,18 @@ def refine_code_with_claude(code):
         
         data = {
             "model": "claude-3-opus-20240229",
-            "messages": [{
-                "role": "user",
-                "content": f"""
-                Review and refine the following code for best practices and readability.
-                Ensure it is optimized and free of syntax errors.
-                Return each file's code separately and clearly labeled.
-                Code: {code}
-                """
-            }]
+            "max_tokens": 1000,  # Ensures response length is properly set
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"""
+                    Review and refine the following code for best practices and readability.
+                    Ensure it is optimized and free of syntax errors.
+                    Return each file's code separately and clearly labeled.
+                    Code: {code}
+                    """
+                }
+            ]
         }
         
         logger.info("Making request to Claude API")
@@ -170,11 +173,11 @@ def refine_code_with_claude(code):
             raise ValueError("Received empty response from Claude")
             
         return response_data['content'][0]['text']
-            
     except Exception as e:
         logger.error(f"Error refining code with Claude: {str(e)}")
         raise
-    
+
+
 def create_github_branch(branch_name):
     """Create a new branch in GitHub repository"""
     try:
