@@ -1,0 +1,5 @@
+ 
+{
+    "backend": "Create a Node.js API for user authentication using Express and JWT.",
+    "frontend": "Build a React login form with email & password fields and a submit button."
+}
