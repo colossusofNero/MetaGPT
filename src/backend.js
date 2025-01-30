@@ -1,100 +1,83 @@
 ```javascript
 // Import necessary modules
 const express = require('express');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-require('dotenv').config();
+const dotenv = require('dotenv');
 
-// Create a new Express application
+// Initialize dotenv to use environment variables
+dotenv.config();
+
+// Create the Express app
 const app = express();
+app.use(express.json()); // Middleware to parse JSON
 
-// Middleware to parse JSON bodies
-app.use(express.json());
-
-// Mock Users Database
+// User model (usually would interface with a database)
 const users = [];
 
-// Service Layer: for handling business logic
-class AuthService {
-    async hashPassword(password) {
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        return hashedPassword;
+// Middleware to validate token
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token == null) {
+        return res.sendStatus(401);
     }
 
-    async validatePassword(plainPassword, hashedPassword) {
-        return bcrypt.compare(plainPassword, hashedPassword);
-    }
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+        if (err) return res.sendStatus(403);
+        req.user = user;
+        next();
+    });
+};
 
-    generateToken(user) {
-        return jwt.sign({ id: user.id, email: user.email },
-            process.env.JWT_SECRET,
-            { expiresIn: '1h' }
-        );
-    }
-}
-
-// Controller Layer
-class AuthController {
-    constructor(authService) {
-        this.authService = authService;
-    }
-
+// Controller for user authentication
+const authController = {
     async register(req, res) {
         try {
-            const { email, password } = req.body;
-            if(users.some(user => user.email === email)) {
-                return res.status(409).json({ message: 'Email already exists' });
-            }
-
-            const hashedPassword = await this.authService.hashPassword(password);
-            const newUser = { id: users.length + 1, email, password: hashedPassword };
+            const { username, password } = req.body;
+            const hashedPassword = await bcrypt.hash(password, 10);
+            const newUser = { username, password: hashedPassword };
             users.push(newUser);
-
-            res.status(201).json({ message: 'User created successfully', userId: newUser.id });
+            res.status(201).json({ message: "User created" });
         } catch (error) {
-            res.status(500).json({ message: 'Server error' });
+            res.status(500).json({ message: "Server error" });
         }
-    }
+    },
 
     async login(req, res) {
         try {
-            const { email, password } = req.body;
-            const user = users.find(u => u.email === email);
-
-            if (!user) {
-                return res.status(401).json({ message: 'Invalid credentials' });
+            const { username, password } = req.body;
+            const user = users.find(user => user.username === username);
+            if (user == null) {
+                return res.status(400).json({ message: "Cannot find user" });
             }
-
-            const validPassword = await this.authService.validatePassword(password, user.password);
-            if (!validPassword) {
-                return res.status(401).json({ message: 'Invalid credentials' });
+            if (await bcrypt.compare(password, user.password)) {
+                const accessToken = jwt.sign({ username: user.username }, process.env.ACCESS_TOKEN_SECRET);
+                res.json({ accessToken });
+            } else {
+                res.status(403).json({ message: "User authentication failed" });
             }
-
-            const token = this.authService.generateToken(user);
-
-            res.json({ message: 'Logged in successfully', token });
         } catch (error) {
-            res.status(500).json({ message: 'Server error' });
+            res.status(500).json({ message: "Server error" });
         }
     }
-}
+};
 
-// Routes Layer
-function authRoutes(app, controller) {
-    app.post('/register', (req, res) => controller.register(req, res));
-    app.post('/login', (req, res) => controller.login(req, res));
-}
+// Routes
+const authRoutes = (app) => {
+    app.post('/register', authController.register);
+    app.post('/login', authController.login);
+};
 
-// Initialize service and controller
-const authService = new AuthService();
-const authController = new AuthController(authService);
+// Register the routes
+authRoutes(app);
 
-// Setup routes
-authRoutes(app, authController);
-
-// Start server
+// Start the server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
 ```
-This Node.js script sets up an Express server for user registration and login using JWT for authentication and bcrypt for password hashing. It demonstrates how to structure an Express app using services for business logic, controllers for handling requests, and a simple route setup, with environment variables and basic error handling.
+This code defines a basic Express.js application with user registration and login functionalities using JWT for authentication. User details are stored in an array temporarily instead of a database. It uses bcrypt for password hashing and jwt for generating tokens.
