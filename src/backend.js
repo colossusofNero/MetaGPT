@@ -1,83 +1,70 @@
 ```javascript
 // Import necessary modules
 const express = require('express');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const dotenv = require('dotenv');
 
-// Initialize dotenv to use environment variables
+// Initialize dotenv to use variables in .env file
 dotenv.config();
 
-// Create the Express app
+// Set up express app
 const app = express();
-app.use(express.json()); // Middleware to parse JSON
+app.use(express.json()); // Middleware to parse JSON bodies
 
-// User model (usually would interface with a database)
-const users = [];
+// User model simulation for the sake of demonstration
+let users = [];
 
-// Middleware to validate token
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (token == null) {
-        return res.sendStatus(401);
-    }
-
-    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403);
-        req.user = user;
-        next();
-    });
-};
+// Function to generate JWT token
+function generateToken(user) {
+    return jwt.sign({ userId: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
+}
 
 // Controller for user authentication
 const authController = {
-    async register(req, res) {
+    async signup(req, res) {
         try {
             const { username, password } = req.body;
-            const hashedPassword = await bcrypt.hash(password, 10);
-            const newUser = { username, password: hashedPassword };
-            users.push(newUser);
-            res.status(201).json({ message: "User created" });
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(password, salt);
+            const user = { id: users.length + 1, username, password: hashedPassword };
+            users.push(user);
+            const token = generateToken(user);
+            res.status(201).json({ message: 'User created successfully', token });
         } catch (error) {
-            res.status(500).json({ message: "Server error" });
+            res.status(500).json({ message: 'Internal server error' });
         }
     },
 
     async login(req, res) {
         try {
             const { username, password } = req.body;
-            const user = users.find(user => user.username === username);
-            if (user == null) {
-                return res.status(400).json({ message: "Cannot find user" });
-            }
-            if (await bcrypt.compare(password, user.password)) {
-                const accessToken = jwt.sign({ username: user.username }, process.env.ACCESS_TOKEN_SECRET);
-                res.json({ accessToken });
-            } else {
-                res.status(403).json({ message: "User authentication failed" });
-            }
+            const user = users.find(u => u.username === username);
+            if (!user) return res.status(404).json({ message: 'User not found' });
+
+            const isMatch = await bcrypt.compare(password, user.password);
+            if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
+
+            const token = generateToken(user);
+            res.status(200).json({ message: 'User logged in successfully', token });
         } catch (error) {
-            res.status(500).json({ message: "Server error" });
+            res.status(500).json({ message: 'Internal server error' });
         }
     }
 };
 
-// Routes
-const authRoutes = (app) => {
-    app.post('/register', authController.register);
-    app.post('/login', authController.login);
-};
+// Routes setup
+const router = express.Router();
 
-// Register the routes
-authRoutes(app);
+router.post('/signup', authController.signup);
+router.post('/login', authController.login);
 
-// Start the server
+// Apply the routes to the app
+app.use('/api/auth', router);
+
+// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
-
 ```
-This code defines a basic Express.js application with user registration and login functionalities using JWT for authentication. User details are stored in an array temporarily instead of a database. It uses bcrypt for password hashing and jwt for generating tokens.
