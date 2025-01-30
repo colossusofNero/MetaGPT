@@ -1,138 +1,131 @@
+Below is a structured implementation for a Node.js backend using Express.js and JWT for user authentication. Here, we'll handle user signup and login functionality.
+
+**File Structure:**
+```
+project_name/
+│
+├── node_modules/
+│
+├── src/
+│   ├── controllers/
+│   │   └── authController.js
+│   ├── routes/
+│   │   └── authRoutes.js
+│   ├── services/
+│   │   └── authService.js
+│   ├── utils/
+│   │   └── jwtHelper.js
+│   └── app.js
+│
+├── .env
+├── package.json
+└── package-lock.json
+```
+
+### _1. Environment Setup (`dotenv` configuration)_
+
+`.env`
+```plaintext
+PORT=3000
+JWT_SECRET=your_jwt_secret_key
+```
+
+### _2. app.js_
+
 ```javascript
-// server.js
-
+require('dotenv').config();
 const express = require('express');
-const dotenv = require('dotenv');
-const userRoutes = require('./routes/userRoutes');
-
-dotenv.config();
+const authRoutes = require('./routes/authRoutes');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Routing setup
-app.use('/api/users', userRoutes);
+// Routes
+app.use('/api/auth', authRoutes);
 
-// Generic error handler
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).send({
-        success: false,
-        message: 'Internal server error'
-    });
-});
-
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running on http://localhost:${PORT}`);
 });
 ```
 
+### _3. authController.js_
+
 ```javascript
-// routes/userRoutes.js
+const authService = require('../services/authService');
+const jwtHelper = require('../utils/jwtHelper');
 
+// Sign up a new user
+exports.signUp = async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        const user = await authService.createUser(username, password);
+        res.status(201).json({ message: 'User created', user });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// Log in a user
+exports.logIn = async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        const user = await authService.verifyUser(username, password);
+        if (!user) {
+            return res.status(401).json({ message: 'Authentication failed' });
+        }
+        const token = jwtHelper.generateToken(user.id);
+        res.status(200).json({ message: 'Logged in successfully', token });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+```
+
+### _4. authRoutes.js_
+
+```javascript
 const express = require('express');
-const { register, login } = require('../controllers/userController');
-
 const router = express.Router();
+const authController = require('../controllers/authController');
 
-// Registration route
-router.post('/register', register);
-
-// Login route
-router.post('/login', login);
+router.post('/signup', authController.signUp);
+router.post('/login', authController.logIn);
 
 module.exports = router;
 ```
 
+### _5. authService.js_
+
 ```javascript
-// controllers/userController.js
+// This is a dummy service to demonstrate the idea.
+// In reality, you should integrate with a database.
 
-const userService = require('../services/userService');
+const users = [];
 
-exports.register = async (req, res) => {
-    try {
-        const user = await userService.registerUser(req.body);
-        res.status(201).send({
-            success: true,
-            data: user,
-            message: 'User registered successfully'
-        });
-    } catch (error) {
-        res.status(500).send({
-            success: false,
-            message: error.message
-        });
-    }
+exports.createUser = async (username, password) => {
+    // Here you would save the user to a database and hash the password
+    const user = { id: users.length + 1, username, password };
+    users.push(user);
+    return user;
 };
 
-exports.login = async (req, res) => {
-    try {
-        const token = await userService.authenticateUser(req.body);
-        res.status(200).send({
-            success: true,
-            token: token
-        });
-    } catch (error) {
-        res.status(401).send({
-            success: false,
-            message: error.message
-        });
-    }
+exports.verifyUser = async (username, password) => {
+    // Here you would look up the user in your database
+    const user = users.find(u => u.username === username && u.password === password);
+    return user;
 };
 ```
 
-```javascript
-// services/userService.js
+### _6. jwtHelper.js_
 
+```javascript
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 
-const users = []; // This would typically be a database
-
-exports.registerUser = async ({ username, password }) => {
-    if (users.find(user => user.username === username)) {
-        throw new Error('User already exists');
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    const newUser = {
-        id: users.length + 1,
-        username,
-        password: hashedPassword
-    };
-
-    users.push(newUser);
-    return { id: newUser.id, username: newUser.username };
-};
-
-exports.authenticateUser = async ({ username, password }) => {
-    const user = users.find(user => user.username === username);
-    if (!user) {
-        throw new Error('User not found');
-    }
-
-    const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) {
-        throw new Error('Password incorrect');
-    }
-
-    const token = jwt.sign(
-        { id: user.id, username: user.username },
-        process.env.JWT_SECRET,
-        { expiresIn: '1h' }
-    );
-
-    return token;
+exports.generateToken = (userId) => {
+    return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '2h' });
 };
 ```
 
-```javascript
-// .env - example environment file
-
-PORT=3000
-JWT_SECRET=your_jwt_secret
-```
+Remember to install the necessary npm modules (`express`, `jsonwebtoken`, `dotenv`) by running `npm install express jsonwebtoken dotenv`. Also, secure handling of passwords (e.g., hashing passwords with `bcryptjs`) should be implemented in a real-world application.
