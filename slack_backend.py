@@ -6,12 +6,9 @@ import os
 import hmac
 import hashlib
 import time
-import json
-import openai
-import anthropic
-from threading import Thread
 import logging
 from dotenv import load_dotenv
+from threading import Thread
 
 # Load environment variables
 load_dotenv()
@@ -27,14 +24,11 @@ REPO_NAME = os.getenv('REPO_NAME')
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 
-# Initialize clients
+# Initialize Slack client
 slack_client = WebClient(token=SLACK_BOT_TOKEN)
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def verify_slack_request(request):
@@ -45,28 +39,20 @@ def verify_slack_request(request):
             return True
             
         timestamp = request.headers.get('X-Slack-Request-Timestamp')
-        if not timestamp:
-            logger.error("No timestamp in headers")
-            return False
-            
-        current_time = time.time()
-        if abs(current_time - int(timestamp)) > 60 * 5:
-            logger.error(f"Invalid timestamp. Current time: {current_time}, Request time: {timestamp}")
+        slack_signature = request.headers.get('X-Slack-Signature')
+
+        if not timestamp or not slack_signature:
+            logger.error("Missing timestamp or Slack signature in headers")
             return False
 
-        slack_signature = request.headers.get('X-Slack-Signature')
-        if not slack_signature:
-            logger.error("No Slack signature in headers")
+        if abs(time.time() - int(timestamp)) > 60 * 5:
+            logger.error("Invalid timestamp - request too old")
             return False
 
         request_body = request.get_data().decode('utf-8')
         sig_basestring = f"v0:{timestamp}:{request_body}"
-        
         signing_secret = os.getenv('SLACK_SIGNING_SECRET')
-        if not signing_secret:
-            logger.error("No signing secret found in environment variables")
-            return False
-            
+
         my_signature = 'v0=' + hmac.new(
             signing_secret.encode('utf-8'),
             sig_basestring.encode('utf-8'),
@@ -75,44 +61,33 @@ def verify_slack_request(request):
         
         return hmac.compare_digest(my_signature, slack_signature)
     except Exception as e:
-        logger.error(f"Error in verify_slack_request: {str(e)}")
+        logger.error(f"Error verifying Slack request: {str(e)}")
         return False
 
-def generate_code_with_chatgpt(project_name, template, description):
-    """Generate initial code using ChatGPT"""
+def handle_chat_command(user_message):
+    """Processes a chat request using OpenAI"""
     try:
-        logger.info(f"Generating code with ChatGPT for project: {project_name}")
-        client = openai.OpenAI()
+        logger.info(f"Processing chat command: {user_message}")
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": user_message}]
+            }
+        ).json()
         
-        prompt = f"""
-        Create a new {template} project named "{project_name}".
-        Include a basic index.js, index.html, and style.css file.
-        Add comments explaining the code.
-        Project Description: {description}
-        Return the code for each file separately, clearly labeled.
-        """
-        
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are an expert software engineer."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        
-        logger.info("Successfully generated code with ChatGPT")
-        return response.choices[0].message.content
+        return response.get("choices", [{}])[0].get("message", {}).get("content", "❌ OpenAI Error: No response received")
     except Exception as e:
-        logger.error(f"Error generating code with ChatGPT: {str(e)}")
-        raise
+        logger.error(f"Error in chat command: {str(e)}")
+        return f"❌ OpenAI Error: {str(e)}"
 
 def refine_code_with_claude(code):
-    """Refine the generated code using Claude via direct API call"""
+    """Refine the generated code using Claude API"""
     try:
         logger.info("Refining code with Claude")
         
         if not CLAUDE_API_KEY:
-            logger.error("CLAUDE_API_KEY is not set")
             raise ValueError("CLAUDE_API_KEY environment variable is not set")
         
         headers = {
@@ -124,66 +99,42 @@ def refine_code_with_claude(code):
         data = {
             "model": "claude-3-opus-20240229",
             "max_tokens": 1000,  # Ensures response length is properly set
-            "messages": [
-                {
-                    "role": "user",
-                    "content": f"""
-                    Review and refine the following code for best practices and readability.
-                    Ensure it is optimized and free of syntax errors.
-                    Return each file's code separately and clearly labeled.
-                    Code: {code}
-                    """
-                }
-            ]
+            "messages": [{"role": "user", "content": f"Refine this code:\n{code}"}]
         }
         
-        logger.info("Making request to Claude API")
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers=headers,
-            json=data
-        )
+        response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
+        response.raise_for_status()
         
-        if response.status_code != 200:
-            logger.error(f"Claude API error: {response.status_code} - {response.text}")
-            raise Exception(f"Claude API returned status code {response.status_code}")
-            
         response_data = response.json()
-        logger.info("Successfully received response from Claude")
-        
-        if not response_data or 'content' not in response_data or not response_data['content']:
-            raise ValueError("Received empty response from Claude")
-            
         return response_data['content'][0]['text']
+        
     except Exception as e:
         logger.error(f"Error refining code with Claude: {str(e)}")
         raise
 
 def create_stackblitz_project(project_name, template, description):
-    """Creates a new project using AI collaboration and StackBlitz"""
+    """Creates a new project using StackBlitz API"""
     try:
         logger.info(f"Creating project: {project_name}")
         
-        # Generate and refine code using AI
-        generated_code = generate_code_with_chatgpt(project_name, template, description)
-        logger.info("Code generated successfully")
-        
+        generated_code = handle_chat_command(f"Generate a {template} project named '{project_name}'. Description: {description}")
         refined_code = refine_code_with_claude(generated_code)
-        logger.info("Code refined successfully")
         
-        # Create project on StackBlitz
-        stackblitz_url = f"https://run.stackblitz.com/api/github/{REPO_OWNER}/{REPO_NAME}"
-        response = requests.post(stackblitz_url)
+        stackblitz_api_url = "https://run.stackblitz.com/api/github/colossusofNero/MetaGPT"
+        project_data = {
+            "title": project_name,
+            "description": description,
+            "template": template,
+            "files": {"index.js": refined_code}
+        }
+
+        response = requests.post(stackblitz_api_url, json=project_data)
         
         if response.status_code == 200:
-            project_url = response.url
-            logger.info(f"Project created successfully at: {project_url}")
-            return f"✅ Project '{project_name}' created successfully! Open it here: {project_url}"
+            project_url = response.json().get("url")
+            return f"✅ Project '{project_name}' created successfully! Open it here: {project_url}" if project_url else "❌ Error: No valid project link"
         else:
-            error_msg = f"Failed to create project. Status: {response.status_code}"
-            logger.error(error_msg)
-            return f"❌ {error_msg}"
-            
+            return f"❌ StackBlitz API Error: {response.status_code}"
     except Exception as e:
         logger.error(f"Error creating project: {str(e)}")
         return f"❌ Error: {str(e)}"
@@ -194,32 +145,45 @@ def health_check():
 
 @app.route("/slack", methods=["POST"])
 def slack_handler():
+    """Handles Slack events"""
     logger.info("Received Slack request")
     
     if not verify_slack_request(request):
-        logger.error("Failed to verify Slack request")
         return jsonify({"error": "Invalid request signature"}), 403
 
     try:
+        if request.is_json and request.json.get('type') == 'url_verification':
+            return jsonify({"challenge": request.json.get('challenge')})
+
         command_text = request.form.get('text', '').strip()
         channel_id = request.form.get('channel_id')
 
-        logger.info(f"Processing command: {command_text}")
-        logger.info(f"Channel ID: {channel_id}")
+        def process_command():
+            try:
+                if not channel_id:
+                    return
+                
+                if command_text.startswith("create-project"):
+                    parts = command_text.split(maxsplit=3)
+                    if len(parts) < 4:
+                        response_text = "❌ Usage: `/metagpt create-project <name> <template> <description>`"
+                    else:
+                        _, project_name, template, description = parts
+                        response_text = create_stackblitz_project(project_name, template, description)
+                elif command_text.startswith("chat "):
+                    user_message = command_text[5:]
+                    response_text = handle_chat_command(user_message)
+                else:
+                    response_text = "❌ Unknown command. Use `/metagpt create-project` or `/metagpt chat`"
 
-        if command_text.startswith("create-project"):
-            parts = command_text.split(maxsplit=3)
-            if len(parts) < 4:
-                response_text = "❌ Please provide all required details: `/metagpt create-project <project-name> <template> <description>`"
-            else:
-                _, project_name, template, description = parts
-                response_text = create_stackblitz_project(project_name, template, description)
+                slack_client.chat_postMessage(channel=channel_id, text=response_text)
+            except Exception as e:
+                slack_client.chat_postMessage(channel=channel_id, text=f"❌ Error: {str(e)}")
 
-        slack_client.chat_postMessage(channel=channel_id, text=response_text)
+        Thread(target=process_command).start()
         return jsonify({"message": "Processing request..."}), 200
 
     except Exception as e:
-        logger.error(f"Error handling request: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == "__main__":
