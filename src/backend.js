@@ -1,70 +1,79 @@
 ```javascript
-// Import necessary modules
+// Import required modules
 const express = require('express');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const dotenv = require('dotenv');
 
-// Initialize dotenv to use variables in .env file
+// Initialize dotenv to use environment variables
 dotenv.config();
 
-// Set up express app
+// Initialize the Express application
 const app = express();
-app.use(express.json()); // Middleware to parse JSON bodies
+app.use(express.json());
 
-// User model simulation for the sake of demonstration
-let users = [];
+// A simple in-memory "database" for demonstration purposes
+const users = [];
 
-// Function to generate JWT token
-function generateToken(user) {
-    return jwt.sign({ userId: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
-}
+// Middleware to validate tokens
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (token == null) return res.sendStatus(401);
 
-// Controller for user authentication
-const authController = {
-    async signup(req, res) {
-        try {
-            const { username, password } = req.body;
-            const salt = await bcrypt.genSalt(10);
-            const hashedPassword = await bcrypt.hash(password, salt);
-            const user = { id: users.length + 1, username, password: hashedPassword };
-            users.push(user);
-            const token = generateToken(user);
-            res.status(201).json({ message: 'User created successfully', token });
-        } catch (error) {
-            res.status(500).json({ message: 'Internal server error' });
-        }
-    },
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+        if (err) return res.sendStatus(403);
+        req.user = user;
+        next();
+    });
+};
 
-    async login(req, res) {
-        try {
-            const { username, password } = req.body;
-            const user = users.find(u => u.username === username);
-            if (!user) return res.status(404).json({ message: 'User not found' });
-
-            const isMatch = await bcrypt.compare(password, user.password);
-            if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
-
-            const token = generateToken(user);
-            res.status(200).json({ message: 'User logged in successfully', token });
-        } catch (error) {
-            res.status(500).json({ message: 'Internal server error' });
-        }
+// Controller: Handling user registration
+const registerUser = async (req, res) => {
+    try {
+        const hashedPassword = await bcrypt.hash(req.body.password, 10);
+        const newUser = {
+            username: req.body.username,
+            password: hashedPassword
+        };
+        users.push(newUser);
+        res.status(201).json({ message: "User created" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to register user" });
     }
 };
 
-// Routes setup
-const router = express.Router();
+// Controller: Handling user login
+const loginUser = async (req, res) => {
+    try {
+        const user = users.find(user => user.username === req.body.username);
+        if (user == null) {
+            return res.status(400).send('Cannot find user');
+        }
+        if (await bcrypt.compare(req.body.password, user.password)) {
+            const userPayload = { username: user.username };
+            const accessToken = jwt.sign(userPayload, process.env.ACCESS_TOKEN_SECRET);
+            res.json({ accessToken: accessToken });
+        } else {
+            res.status(403).json({ error: "Login failed" });
+        }
+    } catch (err) {
+        res.status(500).json({ error: "Failed to log in" });
+    }
+};
 
-router.post('/signup', authController.signup);
-router.post('/login', authController.login);
+// Define the routes
+app.post('/register', registerUser);
+app.post('/login', loginUser);
 
-// Apply the routes to the app
-app.use('/api/auth', router);
-
-// Start server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// Protected route example
+app.get('/protected', authenticateToken, (req, res) => {
+    res.json({message: `Hello ${req.user.username}`});
 });
+
+// Set the server to listen on a port
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 ```
+This script sets up an Express server and includes endpoints for user registration and login, utilizing JSON Web Tokens for authentication. The `/protected` endpoint demonstrates the use of middleware for route protection based on valid JWTs. Adjustments such as tying into actual database logic and advanced error reporting are left as possible enhancements.
