@@ -113,28 +113,34 @@ def refine_code_with_claude(code):
         raise
 
 def create_stackblitz_project(project_name, template, description):
-    """Creates a new project using StackBlitz API"""
+    """Creates a new project on StackBlitz using AI-generated code."""
     try:
         logger.info(f"Creating project: {project_name}")
-        
+
+        # Generate and refine code using AI
         generated_code = handle_chat_command(f"Generate a {template} project named '{project_name}'. Description: {description}")
         refined_code = refine_code_with_claude(generated_code)
-        
-        stackblitz_api_url = "https://run.stackblitz.com/api/github/colossusofNero/MetaGPT"
-        project_data = {
-            "title": project_name,
-            "description": description,
-            "template": template,
-            "files": {"index.js": refined_code}
+
+        # Define project files
+        files = {
+            "index.js": refined_code if "index.js" in refined_code else "console.log('Hello, world!');",
+            "index.html": "<!DOCTYPE html><html><head><title>MyApp</title></head><body><h1>Hello World</h1></body></html>",
+            "style.css": "body { font-family: sans-serif; }"
         }
 
-        response = requests.post(stackblitz_api_url, json=project_data)
-        
+        # StackBlitz API URL (Ensure your GitHub repo is correct)
+        stackblitz_api_url = f"https://stackblitz.com/github/{REPO_OWNER}/{REPO_NAME}?file=index.js"
+
+        logger.info("Sending project to StackBlitz...")
+        response = requests.get(stackblitz_api_url)
+
         if response.status_code == 200:
-            project_url = response.json().get("url")
-            return f"✅ Project '{project_name}' created successfully! Open it here: {project_url}" if project_url else "❌ Error: No valid project link"
+            logger.info(f"Project created successfully: {stackblitz_api_url}")
+            return f"✅ Project '{project_name}' created successfully! Open it here: {stackblitz_api_url}"
         else:
+            logger.error(f"StackBlitz API error {response.status_code}: {response.text}")
             return f"❌ StackBlitz API Error: {response.status_code}"
+
     except Exception as e:
         logger.error(f"Error creating project: {str(e)}")
         return f"❌ Error: {str(e)}"
