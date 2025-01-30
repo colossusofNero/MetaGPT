@@ -1,79 +1,138 @@
 ```javascript
-// Import required modules
-const express = require('express');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const dotenv = require('dotenv');
+// server.js
 
-// Initialize dotenv to use environment variables
+const express = require('express');
+const dotenv = require('dotenv');
+const userRoutes = require('./routes/userRoutes');
+
 dotenv.config();
 
-// Initialize the Express application
 const app = express();
+
 app.use(express.json());
 
-// A simple in-memory "database" for demonstration purposes
-const users = [];
+// Routing setup
+app.use('/api/users', userRoutes);
 
-// Middleware to validate tokens
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (token == null) return res.sendStatus(401);
-
-    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403);
-        req.user = user;
-        next();
+// Generic error handler
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).send({
+        success: false,
+        message: 'Internal server error'
     });
-};
-
-// Controller: Handling user registration
-const registerUser = async (req, res) => {
-    try {
-        const hashedPassword = await bcrypt.hash(req.body.password, 10);
-        const newUser = {
-            username: req.body.username,
-            password: hashedPassword
-        };
-        users.push(newUser);
-        res.status(201).json({ message: "User created" });
-    } catch (err) {
-        res.status(500).json({ error: "Failed to register user" });
-    }
-};
-
-// Controller: Handling user login
-const loginUser = async (req, res) => {
-    try {
-        const user = users.find(user => user.username === req.body.username);
-        if (user == null) {
-            return res.status(400).send('Cannot find user');
-        }
-        if (await bcrypt.compare(req.body.password, user.password)) {
-            const userPayload = { username: user.username };
-            const accessToken = jwt.sign(userPayload, process.env.ACCESS_TOKEN_SECRET);
-            res.json({ accessToken: accessToken });
-        } else {
-            res.status(403).json({ error: "Login failed" });
-        }
-    } catch (err) {
-        res.status(500).json({ error: "Failed to log in" });
-    }
-};
-
-// Define the routes
-app.post('/register', registerUser);
-app.post('/login', loginUser);
-
-// Protected route example
-app.get('/protected', authenticateToken, (req, res) => {
-    res.json({message: `Hello ${req.user.username}`});
 });
 
-// Set the server to listen on a port
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
 ```
-This script sets up an Express server and includes endpoints for user registration and login, utilizing JSON Web Tokens for authentication. The `/protected` endpoint demonstrates the use of middleware for route protection based on valid JWTs. Adjustments such as tying into actual database logic and advanced error reporting are left as possible enhancements.
+
+```javascript
+// routes/userRoutes.js
+
+const express = require('express');
+const { register, login } = require('../controllers/userController');
+
+const router = express.Router();
+
+// Registration route
+router.post('/register', register);
+
+// Login route
+router.post('/login', login);
+
+module.exports = router;
+```
+
+```javascript
+// controllers/userController.js
+
+const userService = require('../services/userService');
+
+exports.register = async (req, res) => {
+    try {
+        const user = await userService.registerUser(req.body);
+        res.status(201).send({
+            success: true,
+            data: user,
+            message: 'User registered successfully'
+        });
+    } catch (error) {
+        res.status(500).send({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+exports.login = async (req, res) => {
+    try {
+        const token = await userService.authenticateUser(req.body);
+        res.status(200).send({
+            success: true,
+            token: token
+        });
+    } catch (error) {
+        res.status(401).send({
+            success: false,
+            message: error.message
+        });
+    }
+};
+```
+
+```javascript
+// services/userService.js
+
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+const users = []; // This would typically be a database
+
+exports.registerUser = async ({ username, password }) => {
+    if (users.find(user => user.username === username)) {
+        throw new Error('User already exists');
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const newUser = {
+        id: users.length + 1,
+        username,
+        password: hashedPassword
+    };
+
+    users.push(newUser);
+    return { id: newUser.id, username: newUser.username };
+};
+
+exports.authenticateUser = async ({ username, password }) => {
+    const user = users.find(user => user.username === username);
+    if (!user) {
+        throw new Error('User not found');
+    }
+
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
+        throw new Error('Password incorrect');
+    }
+
+    const token = jwt.sign(
+        { id: user.id, username: user.username },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+    );
+
+    return token;
+};
+```
+
+```javascript
+// .env - example environment file
+
+PORT=3000
+JWT_SECRET=your_jwt_secret
+```
