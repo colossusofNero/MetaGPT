@@ -37,7 +37,7 @@ def verify_slack_request(request):
         if os.getenv('DEVELOPMENT_MODE') == 'true':
             logger.warning("Development mode enabled - skipping signature verification")
             return True
-            
+
         timestamp = request.headers.get('X-Slack-Request-Timestamp')
         slack_signature = request.headers.get('X-Slack-Signature')
 
@@ -51,14 +51,17 @@ def verify_slack_request(request):
 
         request_body = request.get_data().decode('utf-8')
         sig_basestring = f"v0:{timestamp}:{request_body}"
-        signing_secret = os.getenv('SLACK_SIGNING_SECRET')
+
+        if not SLACK_SIGNING_SECRET:
+            logger.error("SLACK_SIGNING_SECRET is not set")
+            return False
 
         my_signature = 'v0=' + hmac.new(
-            signing_secret.encode('utf-8'),
+            SLACK_SIGNING_SECRET.encode('utf-8'),
             sig_basestring.encode('utf-8'),
             hashlib.sha256
         ).hexdigest()
-        
+
         return hmac.compare_digest(my_signature, slack_signature)
     except Exception as e:
         logger.error(f"Error verifying Slack request: {str(e)}")
@@ -75,9 +78,9 @@ def handle_chat_command(user_message):
                 "model": "gpt-4",
                 "messages": [{"role": "user", "content": user_message}]
             }
-        ).json()
-        
-        return response.get("choices", [{}])[0].get("message", {}).get("content", "❌ OpenAI Error: No response received")
+        )
+        response_data = response.json()
+        return response_data.get("choices", [{}])[0].get("message", {}).get("content", "❌ OpenAI Error: No valid response received")
     except Exception as e:
         logger.error(f"Error in chat command: {str(e)}")
         return f"❌ OpenAI Error: {str(e)}"
@@ -86,52 +89,41 @@ def refine_code_with_claude(code):
     """Refine the generated code using Claude API"""
     try:
         logger.info("Refining code with Claude")
-        
+
         if not CLAUDE_API_KEY:
             raise ValueError("CLAUDE_API_KEY environment variable is not set")
-        
+
         headers = {
             "x-api-key": CLAUDE_API_KEY,
             "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
+            "Content-Type": "application/json"
         }
-        
+
         data = {
             "model": "claude-3-opus-20240229",
-            "max_tokens": 1000,  # Ensures response length is properly set
+            "max_tokens": 1000,
             "messages": [{"role": "user", "content": f"Refine this code:\n{code}"}]
         }
-        
+
         response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
         response.raise_for_status()
-        
+
         response_data = response.json()
-        return response_data['content'][0]['text']
-        
+        return response_data.get("content", [{}])[0].get("text", "❌ Claude API Error: No valid response")
     except Exception as e:
         logger.error(f"Error refining code with Claude: {str(e)}")
-        raise
+        return f"❌ Claude API Error: {str(e)}"
 
 def create_stackblitz_project(project_name, template, description):
     """Creates a new project on StackBlitz using AI-generated code."""
     try:
         logger.info(f"Creating project: {project_name}")
 
-        # Generate and refine code using AI
         generated_code = handle_chat_command(f"Generate a {template} project named '{project_name}'. Description: {description}")
         refined_code = refine_code_with_claude(generated_code)
 
-        # Define project files
-        files = {
-            "index.js": refined_code if "index.js" in refined_code else "console.log('Hello, world!');",
-            "index.html": "<!DOCTYPE html><html><head><title>MyApp</title></head><body><h1>Hello World</h1></body></html>",
-            "style.css": "body { font-family: sans-serif; }"
-        }
-
-        # StackBlitz API URL (Ensure your GitHub repo is correct)
         stackblitz_api_url = f"https://stackblitz.com/github/{REPO_OWNER}/{REPO_NAME}?file=index.js"
 
-        logger.info("Sending project to StackBlitz...")
         response = requests.get(stackblitz_api_url)
 
         if response.status_code == 200:
@@ -140,7 +132,6 @@ def create_stackblitz_project(project_name, template, description):
         else:
             logger.error(f"StackBlitz API error {response.status_code}: {response.text}")
             return f"❌ StackBlitz API Error: {response.status_code}"
-
     except Exception as e:
         logger.error(f"Error creating project: {str(e)}")
         return f"❌ Error: {str(e)}"
@@ -153,7 +144,7 @@ def health_check():
 def slack_handler():
     """Handles Slack events"""
     logger.info("Received Slack request")
-    
+
     if not verify_slack_request(request):
         return jsonify({"error": "Invalid request signature"}), 403
 

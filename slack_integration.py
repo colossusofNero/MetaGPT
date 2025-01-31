@@ -3,8 +3,8 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 # Slack Bot Token and Channel ID
-SLACK_BOT_TOKEN = "xoxb-8265646325943-8282714938532-1R5G6EMOwYlsMND4KuJD6nd9"
-CHANNEL_ID = "C087TK1MCS3"               
+SLACK_BOT_TOKEN = "place-holder"
+CHANNEL_ID = "place-holder"               
 
 # Create a Slack client
 client = WebClient(token=SLACK_BOT_TOKEN)

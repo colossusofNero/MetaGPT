@@ -3,21 +3,26 @@ const axios = require('axios');
 const fs = require('fs');
 const { execSync } = require('child_process');
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY; // ChatGPT API Key
-const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY; // Claude API Key
+// Load API keys securely
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;  // Updated to match GitHub Secrets
+const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
+const GITHUB_TOKEN = process.env.GIT_TOKEN;
 
 // Load AI task definitions
 const tasks = JSON.parse(fs.readFileSync('tasks.json', 'utf8'));
 
-// Function to call an AI model
+// Function to call OpenAI (ChatGPT)
 async function callAI(apiKey, model, prompt) {
     try {
+        console.log(`🔍 Calling OpenAI (${model})...`);
         const response = await axios.post(
-            "https://api.openai.com/v1/chat/completions",  // <-- Corrected endpoint
+            "https://api.openai.com/v1/chat/completions",
             {
                 model: model,
-                messages: [{ role: "system", content: "You are a helpful AI coding assistant." }, 
-                           { role: "user", content: prompt }], // <-- Updated payload format
+                messages: [
+                    { role: "system", content: "You are a helpful AI coding assistant." },
+                    { role: "user", content: prompt }
+                ],
                 max_tokens: 1000
             },
             {
@@ -27,16 +32,19 @@ async function callAI(apiKey, model, prompt) {
                 }
             }
         );
-        return response.data.choices[0].message.content.trim(); // <-- Updated response parsing
+        return response.data.choices[0].message.content.trim();
     } catch (error) {
-        console.error(`❌ Error calling ${model}:`, error.response ? error.response.data : error.message);
+        console.error(`❌ Error calling OpenAI (${model}):`, error.response ? error.response.data : error.message);
+        return null;  // Prevents crashes when API fails
     }
 }
 
+// Function to call Anthropic (Claude)
 async function callClaudeAI(apiKey, prompt) {
     try {
+        console.log("🔍 Calling Claude AI...");
         const response = await axios.post(
-            "https://api.anthropic.com/v1/messages",  // Anthropic API endpoint
+            "https://api.anthropic.com/v1/messages",
             {
                 model: "claude-2",
                 max_tokens: 1000,
@@ -44,7 +52,7 @@ async function callClaudeAI(apiKey, prompt) {
             },
             {
                 headers: {
-                    "x-api-key": apiKey,  // Anthropic uses "x-api-key"
+                    "x-api-key": apiKey,
                     "anthropic-version": "2023-06-01",
                     "Content-Type": "application/json"
                 }
@@ -53,9 +61,9 @@ async function callClaudeAI(apiKey, prompt) {
         return response.data.content[0].text.trim();
     } catch (error) {
         console.error(`❌ Error calling Claude API:`, error.response ? error.response.data : error.message);
+        return null;
     }
 }
-
 
 // Generate AI-generated code
 async function generateCode() {
@@ -76,7 +84,7 @@ async function generateCode() {
     `;
     const backendCode = await callAI(OPENAI_API_KEY, "gpt-4-turbo", backendPrompt);
     
-    if (backendCode) { // <-- Ensure response is valid before writing
+    if (backendCode) {
         fs.writeFileSync('src/backend.js', backendCode);
         console.log("✅ Backend code generated.");
     } else {
@@ -95,9 +103,9 @@ async function generateCode() {
 
     Provide ONLY the React code. Do not include explanations.
     `;
-    const frontendCode = await callAI(CLAUDE_API_KEY, "claude-2", frontendPrompt);
+    const frontendCode = await callClaudeAI(CLAUDE_API_KEY, frontendPrompt);
     
-    if (frontendCode) { // <-- Ensure response is valid before writing
+    if (frontendCode) {
         fs.writeFileSync('src/frontend.js', frontendCode);
         console.log("✅ Frontend code generated.");
     } else {
@@ -108,12 +116,14 @@ async function generateCode() {
 // Commit AI-generated code to GitHub
 async function commitCode() {
     console.log("📂 Committing AI-generated code...");
-
-    execSync('git add src/backend.js src/frontend.js');
-    execSync('git commit -m "Added AI-generated backend and frontend"');
-    execSync('git push origin main');
-
-    console.log("🚀 Code successfully pushed to GitHub!");
+    try {
+        execSync('git add src/backend.js src/frontend.js');
+        execSync('git commit -m "Added AI-generated backend and frontend"');
+        execSync('git push origin main');
+        console.log("🚀 Code successfully pushed to GitHub!");
+    } catch (error) {
+        console.error("❌ Git push failed:", error.message);
+    }
 }
 
 // 🚀 Run AI Code Generation & Commit Process
