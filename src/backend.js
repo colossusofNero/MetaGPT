@@ -1,75 +1,110 @@
 ```javascript
-// Import necessary modules
+// index.js - Entry point of the application
+require('dotenv').config();
 const express = require('express');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
-const dotenv = require('dotenv');
-const bodyParser = require('body-parser');
-
-// Initialize dotenv to manage environment variables
-dotenv.config();
-
-// Constants for environment variables
-const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET;
-
-// Initialize Express app
 const app = express();
-app.use(bodyParser.json());
+const userRoutes = require('./routes/userRoutes');
 
-// Mocked "database" for users
-const users = [];
+app.use(express.json());
 
-// Routes
-app.post('/register', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = { username, password: hashedPassword };
-    users.push(newUser);
-    res.status(201).json({ message: 'User registered successfully', user: newUser });
-  } catch (error) {
-    res.status(500).json({ message: 'Error registering new user', error });
-  }
+// User Routes
+app.use('/api/users', userRoutes);
+
+// Basic Error Handling
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).send({
+        success: false,
+        message: 'Something broke!'
+    });
 });
 
-app.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const user = users.find(u => u.username === username);
-    
-    if (user && await bcrypt.compare(password, user.password)) {
-      const token = jwt.sign({ username: user.username }, JWT_SECRET, { expiresIn: '1h' });
-      res.status(200).json({ message: 'Login successful', token });
-    } else {
-      res.status(400).json({ message: 'Invalid credentials' });
-    }
-  } catch (error) {
-    res.status(500).json({ message: 'Error logging in', error });
-  }
-});
-
-// Interceptor Middleware to check token
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (token == null) return res.sendStatus(401);
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
-    req.user = user;
-    next();
-  });
-}
-
-// Protected route example
-app.get('/dashboard', authenticateToken, (req, res) => {
-  res.status(200).json({ message: `Welcome to your dashboard, ${req.user.username}!` });
-});
-
-// Start server
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
+
+// routes/userRoutes.js
+const express = require('express');
+const router = express.Router();
+const userController = require('../controllers/userController');
+
+router.post('/login', userController.login);
+router.post('/register', userController.register);
+
+module.exports = router;
+
+// controllers/userController.js
+const userService = require('../services/userService');
+const jwt = require('jsonwebtoken');
+
+exports.login = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const user = await userService.authenticate(email, password);
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'Authentication failed.'
+            });
+        }
+
+        const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {
+            expiresIn: '1h'
+        });
+
+        res.json({
+            success: true,
+            message: 'Authentication successful!',
+            token
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+exports.register = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const user = await userService.createUser(email, password);
+        res.status(201).json({
+            success: true,
+            message: 'User created successfully!',
+            user
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// services/userService.js
+const bcrypt = require('bcrypt');
+
+const users = []; // This should ideally be a database collection
+
+exports.authenticate = async (email, password) => {
+    const user = users.find(u => u.email === email);
+    if (user && await bcrypt.compare(password, user.password)) {
+        return user;
+    }
+    return null;
+};
+
+exports.createUser = async (email, password) => {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = {
+        id: users.length + 1,
+        email,
+        password: hashedPassword
+    };
+    users.push(newUser);
+    return newUser;
+};
 ```
+This code snippet is structured into an entry point `index.js`, routes in `userRoutes.js`, controllers in `userController.js`, and service logic in `userService.js`. It's essential to replace the array-based user storage with a proper database implementation for real-world applications.
